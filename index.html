@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>五目並べ — 囲碁盤 Gomoku</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <div class="title-group">
+        <h1>五目並べ</h1>
+        <span class="subtitle">GOMOKU · 15×15</span>
+      </div>
+      <button id="sound-toggle" class="icon-btn" title="効果音のオン/オフ" aria-label="効果音のオン/オフ">
+        <span id="sound-icon">🔊</span>
+      </button>
+    </header>
+
+    <main class="main-layout">
+      <!-- 左／上：囲碁盤エリア -->
+      <section class="board-section">
+        <div class="board-frame">
+          <canvas id="board-canvas" width="640" height="640" aria-label="五目並べの囲碁盤"></canvas>
+          <div id="result-overlay" class="result-overlay hidden" role="dialog" aria-modal="true">
+            <div class="result-card">
+              <div id="result-badge" class="result-badge">勝利</div>
+              <h2 id="result-title">あなたの勝ちです！</h2>
+              <p id="result-detail">手数: 24手 · 難易度: Normal</p>
+              <div class="result-actions">
+                <button id="overlay-rematch-btn" class="btn btn-primary">もう一局打つ</button>
+                <button id="overlay-close-btn" class="btn btn-secondary">盤面を見る</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右／下：コントロールパネル -->
+      <aside class="sidebar">
+        <!-- ステータスカード -->
+        <div class="card status-card">
+          <div class="status-row">
+            <div class="turn-indicator">
+              <span id="turn-stone" class="stone-dot black"></span>
+              <span id="status-text" class="status-text">あなたの手番（黒）</span>
+            </div>
+            <div class="move-counter">
+              <span class="label">手数</span>
+              <span id="move-count" class="value">0</span>
+            </div>
+          </div>
+          <div id="thinking-bar" class="thinking-bar hidden">
+            <span class="spinner"></span>
+            <span>PCが思考中...</span>
+          </div>
+        </div>
+
+        <!-- 難易度選択 -->
+        <div class="card control-card">
+          <h2 class="card-title">難易度（PCの強さ）</h2>
+          <div class="segmented-control" id="difficulty-group" role="radiogroup" aria-label="難易度">
+            <button type="button" class="seg-btn" data-difficulty="easy">Easy</button>
+            <button type="button" class="seg-btn active" data-difficulty="normal">Normal</button>
+            <button type="button" class="seg-btn" data-difficulty="hard">Hard</button>
+          </div>
+          <p id="difficulty-desc" class="helper-text">
+            基本の攻防をこなす標準的な強さです。
+          </p>
+        </div>
+
+        <!-- 手番選択 -->
+        <div class="card control-card">
+          <h2 class="card-title">あなたの手番</h2>
+          <div class="segmented-control" id="color-group" role="radiogroup" aria-label="手番">
+            <button type="button" class="seg-btn active" data-color="1">
+              <span class="stone-dot black small"></span> 先手（黒）
+            </button>
+            <button type="button" class="seg-btn" data-color="2">
+              <span class="stone-dot white small"></span> 後手（白）
+            </button>
+          </div>
+        </div>
+
+        <!-- アクションボタン -->
+        <div class="card control-card">
+          <div class="action-grid">
+            <button id="new-game-btn" class="btn btn-primary">新しい対局</button>
+            <button id="undo-btn" class="btn btn-secondary" disabled>待った</button>
+          </div>
+        </div>
+
+        <!-- 戦績 -->
+        <div class="card score-card">
+          <h2 class="card-title">戦績（セッション）</h2>
+          <div class="score-grid">
+            <div class="score-item">
+              <span class="score-label">勝ち</span>
+              <span id="score-win" class="score-value win">0</span>
+            </div>
+            <div class="score-item">
+              <span class="score-label">負け</span>
+              <span id="score-loss" class="score-value loss">0</span>
+            </div>
+            <div class="score-item">
+              <span class="score-label">引分</span>
+              <span id="score-draw" class="score-value draw">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ルール説明 -->
+        <div class="card rules-card">
+          <h2 class="card-title">ルール</h2>
+          <ul class="rules-list">
+            <li>縦・横・斜めのいずれかに自分の石を<strong>5つ</strong>並べると勝利です。</li>
+            <li>黒（先手）と白（後手）が交互に交点へ石を置きます。</li>
+            <li>難易度や手番を変更すると新しい対局が始まります。</li>
+          </ul>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="ai.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
