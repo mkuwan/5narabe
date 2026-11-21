@@ -53,8 +53,10 @@
           </div>
           <div id="thinking-bar" class="thinking-bar hidden">
             <span class="spinner"></span>
-            <span>PCが思考中...</span>
+            <span id="thinking-text">PCが思考中...</span>
           </div>
+          <div id="ai-comment" class="ai-comment hidden"></div>
+          <div id="ai-error" class="ai-error hidden"></div>
         </div>
 
         <!-- 難易度選択 -->
@@ -64,9 +66,65 @@
             <button type="button" class="seg-btn" data-difficulty="easy">Easy</button>
             <button type="button" class="seg-btn active" data-difficulty="normal">Normal</button>
             <button type="button" class="seg-btn" data-difficulty="hard">Hard</button>
+            <button type="button" class="seg-btn" data-difficulty="llm">AI</button>
           </div>
           <p id="difficulty-desc" class="helper-text">
             基本の攻防をこなす標準的な強さです。
+          </p>
+        </div>
+
+        <!-- AI API 設定（AIモード選択時のみ表示） -->
+        <div id="llm-settings-card" class="card control-card llm-card hidden">
+          <h2 class="card-title">AI API 設定</h2>
+          <div class="form-group">
+            <label class="form-label">プロバイダー</label>
+            <div class="segmented-control" id="provider-group" role="radiogroup" aria-label="AIプロバイダー">
+              <button type="button" class="seg-btn active" data-provider="gemini">Gemini</button>
+              <button type="button" class="seg-btn" data-provider="claude">Claude</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="llm-apikey-input" class="form-label">APIキー</label>
+            <div class="input-with-btn">
+              <input
+                id="llm-apikey-input"
+                type="password"
+                class="text-input"
+                placeholder="APIキーを入力..."
+                autocomplete="off"
+              />
+              <button type="button" id="toggle-apikey-btn" class="inline-btn" title="表示切替">表示</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <div class="label-row">
+              <label for="llm-model-input" class="form-label">モデル（検索・選択）</label>
+              <button type="button" id="fetch-models-btn" class="link-btn" title="APIキーを使って利用可能な最新モデル一覧を取得">
+                🔄 APIから取得
+              </button>
+            </div>
+            <div class="model-picker" id="model-picker">
+              <input
+                id="llm-model-input"
+                type="text"
+                class="text-input"
+                value=""
+                placeholder="モデル名で検索または選択..."
+                autocomplete="off"
+                spellcheck="false"
+                aria-autocomplete="list"
+                aria-expanded="false"
+              />
+              <ul id="model-dropdown" class="model-dropdown hidden" role="listbox"></ul>
+            </div>
+            <p id="model-fetch-status" class="field-status hidden"></p>
+          </div>
+          <label class="checkbox-row">
+            <input id="save-apikey-checkbox" type="checkbox" />
+            <span>このブラウザにキーを記憶する</span>
+          </label>
+          <p class="security-note">
+            ※ APIキーはブラウザから公式APIへ直接送信され、外部サーバーには送信されません。
           </p>
         </div>
 
@@ -124,6 +182,7 @@
   </div>
 
   <script src="ai.js"></script>
+  <script src="llm.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

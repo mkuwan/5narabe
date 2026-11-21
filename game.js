@@ -2,6 +2,15 @@
   'use strict';
 
   const { BOARD_SIZE, EMPTY, BLACK, WHITE, checkWin, getBestMove } = window.GomokuAI;
+  const {
+    DEFAULT_MODELS,
+    PRESET_MODELS,
+    toCoord,
+    getLlmMove,
+    fetchAvailableModels,
+  } = window.GomokuLLM;
+
+  const STORAGE_KEY = 'gomoku_llm_settings_v1';
 
   const STAR_POINTS = [
     [3, 3],
@@ -24,6 +33,10 @@
       label: 'Hard',
       desc: '数手先を読む本格AI。油断すると四三や活四で攻められます。',
     },
+    llm: {
+      label: 'AI (LLM)',
+      desc: 'Gemini / Claude API を実際に呼び出して対局するモードです。',
+    },
   };
 
   // DOM 要素
@@ -33,8 +46,21 @@
   const turnStoneEl = document.getElementById('turn-stone');
   const moveCountEl = document.getElementById('move-count');
   const thinkingBarEl = document.getElementById('thinking-bar');
+  const thinkingTextEl = document.getElementById('thinking-text');
+  const aiCommentEl = document.getElementById('ai-comment');
+  const aiErrorEl = document.getElementById('ai-error');
   const difficultyGroup = document.getElementById('difficulty-group');
   const difficultyDescEl = document.getElementById('difficulty-desc');
+  const llmSettingsCard = document.getElementById('llm-settings-card');
+  const providerGroup = document.getElementById('provider-group');
+  const modelPickerEl = document.getElementById('model-picker');
+  const llmModelInput = document.getElementById('llm-model-input');
+  const modelDropdownEl = document.getElementById('model-dropdown');
+  const fetchModelsBtn = document.getElementById('fetch-models-btn');
+  const modelFetchStatusEl = document.getElementById('model-fetch-status');
+  const llmApiKeyInput = document.getElementById('llm-apikey-input');
+  const toggleApiKeyBtn = document.getElementById('toggle-apikey-btn');
+  const saveApiKeyCheckbox = document.getElementById('save-apikey-checkbox');
   const colorGroup = document.getElementById('color-group');
   const newGameBtn = document.getElementById('new-game-btn');
   const undoBtn = document.getElementById('undo-btn');
@@ -57,14 +83,20 @@
   let aiColor = WHITE;
   let currentTurn = BLACK;
   let difficulty = 'normal';
+  let llmProvider = 'gemini';
   let gameOver = false;
   let isAiThinking = false;
   let winningLine = null;
   let hoverPos = null; // { r, c } | null
   let soundEnabled = true;
   let aiTimerId = null;
+  let gameSessionId = 0;
 
   const scores = { win: 0, loss: 0, draw: 0 };
+  const modelCatalog = {
+    gemini: PRESET_MODELS.gemini.slice(),
+    claude: PRESET_MODELS.claude.slice(),
+  };
 
   // 描画メトリクス（論理ピクセル）
   let boardPixelSize = 640;
@@ -537,19 +569,130 @@
     }, 420);
   }
 
+  function showAiComment(text) {
+    if (!text) {
+      aiCommentEl.classList.add('hidden');
+      aiCommentEl.textContent = '';
+      return;
+    }
+    aiCommentEl.textContent = text;
+    aiCommentEl.classList.remove('hidden');
+  }
+
+  function showAiError(text) {
+    if (!text) {
+      aiErrorEl.classList.add('hidden');
+      aiErrorEl.textContent = '';
+      return;
+    }
+    aiErrorEl.textContent = text;
+    aiErrorEl.classList.remove('hidden');
+  }
+
+  function persistLlmSettings() {
+    if (!saveApiKeyCheckbox.checked) {
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (_) {}
+      return;
+    }
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          provider: llmProvider,
+          model: llmModelInput.value.trim(),
+          apiKey: llmApiKeyInput.value.trim(),
+        })
+      );
+    } catch (_) {}
+  }
+
+  function loadLlmSettings() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved && (saved.provider === 'gemini' || saved.provider === 'claude')) {
+        llmProvider = saved.provider;
+        providerGroup.querySelectorAll('.seg-btn').forEach((el) => {
+          el.classList.toggle('active', el.dataset.provider === llmProvider);
+        });
+      }
+      if (saved && typeof saved.model === 'string' && saved.model.trim()) {
+        llmModelInput.value = saved.model.trim();
+      } else {
+        llmModelInput.value = DEFAULT_MODELS[llmProvider];
+      }
+      if (saved && typeof saved.apiKey === 'string') {
+        llmApiKeyInput.value = saved.apiKey;
+      }
+      saveApiKeyCheckbox.checked = true;
+    } catch (_) {}
+  }
+
   /**
    * PC（AI）の手番を実行
    */
   function triggerAiTurn() {
     if (gameOver || currentTurn !== aiColor) return;
 
+    const sessionId = gameSessionId;
+    showAiError('');
+
+    // LLM（Gemini / Claude API）モード
+    if (difficulty === 'llm') {
+      const apiKey = llmApiKeyInput.value.trim();
+      if (!apiKey) {
+        showAiError('APIキーを入力してから対局してください（後手の場合は入力後に「新しい対局」を押してください）。');
+        updateUI();
+        return;
+      }
+
+      const providerLabel = llmProvider === 'claude' ? 'Claude' : 'Gemini';
+      thinkingTextEl.textContent = `${providerLabel} が思考中...`;
+      isAiThinking = true;
+      updateUI();
+
+      getLlmMove({
+        board,
+        aiColor,
+        history,
+        provider: llmProvider,
+        apiKey,
+        model: llmModelInput.value.trim() || DEFAULT_MODELS[llmProvider],
+      })
+        .then((result) => {
+          if (sessionId !== gameSessionId || gameOver || currentTurn !== aiColor) return;
+          isAiThinking = false;
+          const coord = toCoord(result.r, result.c);
+          if (result.reason) {
+            showAiComment(`${providerLabel} (${coord}): ${result.reason}`);
+          } else {
+            showAiComment(`${providerLabel} の着手: ${coord}`);
+          }
+          placeStone(result.r, result.c, aiColor);
+        })
+        .catch((err) => {
+          if (sessionId !== gameSessionId || gameOver || currentTurn !== aiColor) return;
+          isAiThinking = false;
+          const msg = err && err.message ? err.message : 'API通信に失敗しました。';
+          showAiError(`${msg}（今回はローカルHardアルゴリズムで代打ちしました）`);
+          const [r, c] = getBestMove(board, aiColor, 'hard');
+          placeStone(r, c, aiColor);
+        });
+      return;
+    }
+
+    // ローカルアルゴリズムモード（Easy / Normal / Hard）
+    thinkingTextEl.textContent = 'PCが思考中...';
     isAiThinking = true;
     updateUI();
 
     const delay = difficulty === 'hard' ? 240 : 280;
     aiTimerId = setTimeout(() => {
       aiTimerId = null;
-      if (gameOver || currentTurn !== aiColor) {
+      if (sessionId !== gameSessionId || gameOver || currentTurn !== aiColor) {
         isAiThinking = false;
         updateUI();
         return;
@@ -569,6 +712,7 @@
       clearTimeout(aiTimerId);
       aiTimerId = null;
     }
+    gameSessionId++;
 
     board = createEmptyBoard();
     history = [];
@@ -578,6 +722,8 @@
     winningLine = null;
     hoverPos = null;
     resultOverlay.classList.add('hidden');
+    showAiComment('');
+    showAiError('');
 
     drawBoard();
     updateUI();
@@ -600,6 +746,8 @@
     resultOverlay.classList.add('hidden');
     gameOver = false;
     winningLine = null;
+    showAiComment('');
+    showAiError('');
 
     // 最後に打ったのがAIなら2手戻し、プレイヤーなら1手戻す
     const last = history[history.length - 1];
@@ -637,12 +785,15 @@
       !(userColor === WHITE && history.length <= 1);
     undoBtn.disabled = !canUndo;
 
+    const opponentLabel =
+      difficulty === 'llm' ? (llmProvider === 'claude' ? 'Claude' : 'Gemini') : 'PC';
+
     // ステータス表示
     if (gameOver) {
       if (winningLine) {
         const winner = board[winningLine[0][0]][winningLine[0][1]];
         turnStoneEl.className = `stone-dot ${winner === BLACK ? 'black' : 'white'}`;
-        statusTextEl.textContent = winner === userColor ? 'あなたの勝利！' : 'PCの勝利';
+        statusTextEl.textContent = winner === userColor ? 'あなたの勝利！' : `${opponentLabel}の勝利`;
       } else {
         turnStoneEl.className = 'stone-dot black';
         statusTextEl.textContent = '引き分け';
@@ -653,7 +804,7 @@
       if (currentTurn === userColor) {
         statusTextEl.textContent = `あなたの手番（${colorName}）`;
       } else {
-        statusTextEl.textContent = `PCの手番（${colorName}）`;
+        statusTextEl.textContent = `${opponentLabel}の手番（${colorName}）`;
       }
     }
   }
@@ -693,6 +844,12 @@
     if (!pos) return;
     if (board[pos.r][pos.c] !== EMPTY) return;
 
+    if (difficulty === 'llm' && !llmApiKeyInput.value.trim()) {
+      showAiError('AIモードで遊ぶには、サイドパネルに APIキー を入力してください。');
+      llmApiKeyInput.focus();
+      return;
+    }
+
     hoverPos = null;
     const placed = placeStone(pos.r, pos.c, userColor);
     if (placed && !gameOver) {
@@ -712,8 +869,184 @@
       el.classList.toggle('active', el.dataset.difficulty === difficulty);
     });
     difficultyDescEl.textContent = DIFFICULTY_INFO[difficulty].desc;
+    llmSettingsCard.classList.toggle('hidden', difficulty !== 'llm');
     startNewGame();
   });
+
+  function setModelFetchStatus(text, type) {
+    if (!text) {
+      modelFetchStatusEl.textContent = '';
+      modelFetchStatusEl.className = 'field-status hidden';
+      return;
+    }
+    modelFetchStatusEl.textContent = text;
+    modelFetchStatusEl.className = `field-status ${type || ''}`.trim();
+  }
+
+  function renderModelDropdown(queryText) {
+    const models = modelCatalog[llmProvider] || [];
+    const q = (queryText || '').trim().toLowerCase();
+    const filtered = q
+      ? models.filter(
+          (m) =>
+            m.id.toLowerCase().includes(q) ||
+            (m.label && m.label.toLowerCase().includes(q)) ||
+            (m.tag && m.tag.toLowerCase().includes(q))
+        )
+      : models;
+
+    modelDropdownEl.innerHTML = '';
+
+    if (filtered.length === 0) {
+      const emptyLi = document.createElement('li');
+      emptyLi.className = 'model-empty';
+      emptyLi.textContent = '一致するモデルがありません（そのまま手入力も可）';
+      modelDropdownEl.appendChild(emptyLi);
+      return;
+    }
+
+    const currentVal = llmModelInput.value.trim();
+    for (const m of filtered) {
+      const li = document.createElement('li');
+      li.className = 'model-option' + (m.id === currentVal ? ' selected' : '');
+      li.setAttribute('role', 'option');
+      li.dataset.modelId = m.id;
+
+      const top = document.createElement('div');
+      top.className = 'model-option-top';
+
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'model-option-label';
+      labelSpan.textContent = m.label || m.id;
+      top.appendChild(labelSpan);
+
+      if (m.tag) {
+        const tagSpan = document.createElement('span');
+        tagSpan.className = 'model-option-tag';
+        tagSpan.textContent = m.tag;
+        top.appendChild(tagSpan);
+      }
+
+      const idDiv = document.createElement('div');
+      idDiv.className = 'model-option-id';
+      idDiv.textContent = m.id;
+
+      li.appendChild(top);
+      li.appendChild(idDiv);
+      modelDropdownEl.appendChild(li);
+    }
+  }
+
+  function openModelDropdown(queryText) {
+    renderModelDropdown(queryText);
+    modelDropdownEl.classList.remove('hidden');
+    llmModelInput.setAttribute('aria-expanded', 'true');
+  }
+
+  function closeModelDropdown() {
+    modelDropdownEl.classList.add('hidden');
+    llmModelInput.setAttribute('aria-expanded', 'false');
+  }
+
+  // AI プロバイダー切り替え（Gemini / Claude）
+  providerGroup.addEventListener('click', (e) => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn) return;
+    const nextProvider = btn.dataset.provider;
+    if (!nextProvider || nextProvider === llmProvider) return;
+
+    llmProvider = nextProvider;
+    providerGroup.querySelectorAll('.seg-btn').forEach((el) => {
+      el.classList.toggle('active', el.dataset.provider === llmProvider);
+    });
+    llmModelInput.value = DEFAULT_MODELS[llmProvider];
+    setModelFetchStatus('', '');
+    closeModelDropdown();
+    persistLlmSettings();
+    updateUI();
+  });
+
+  // モデル検索・選択ドロップダウン制御
+  llmModelInput.addEventListener('focus', () => {
+    // フォーカス時はまず全候補を表示して選びやすくする
+    openModelDropdown('');
+  });
+
+  llmModelInput.addEventListener('input', () => {
+    openModelDropdown(llmModelInput.value);
+    persistLlmSettings();
+  });
+
+  llmModelInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeModelDropdown();
+      llmModelInput.blur();
+    }
+  });
+
+  modelDropdownEl.addEventListener('mousedown', (e) => {
+    const opt = e.target.closest('.model-option');
+    if (!opt) return;
+    e.preventDefault();
+    const modelId = opt.dataset.modelId;
+    if (modelId) {
+      llmModelInput.value = modelId;
+      persistLlmSettings();
+      closeModelDropdown();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!modelPickerEl.contains(e.target)) {
+      closeModelDropdown();
+    }
+  });
+
+  // APIから最新モデル一覧を取得
+  fetchModelsBtn.addEventListener('click', async () => {
+    const apiKey = llmApiKeyInput.value.trim();
+    if (!apiKey) {
+      setModelFetchStatus('先にAPIキーを入力してください。', 'error');
+      llmApiKeyInput.focus();
+      return;
+    }
+
+    const targetProvider = llmProvider;
+    fetchModelsBtn.disabled = true;
+    setModelFetchStatus('利用可能なモデル一覧を取得中...', '');
+
+    try {
+      const models = await fetchAvailableModels(targetProvider, apiKey);
+      if (models.length === 0) {
+        setModelFetchStatus('利用可能なモデルが見つかりませんでした。', 'error');
+      } else {
+        modelCatalog[targetProvider] = models;
+        setModelFetchStatus(`${models.length}件のモデルを取得しました。一覧から選択できます。`, 'success');
+        if (targetProvider === llmProvider) {
+          openModelDropdown('');
+        }
+      }
+    } catch (err) {
+      const msg = err && err.message ? err.message : 'モデル一覧の取得に失敗しました。';
+      setModelFetchStatus(msg, 'error');
+    } finally {
+      fetchModelsBtn.disabled = false;
+    }
+  });
+
+  llmModelInput.addEventListener('change', persistLlmSettings);
+  llmApiKeyInput.addEventListener('input', () => {
+    showAiError('');
+    persistLlmSettings();
+  });
+
+  toggleApiKeyBtn.addEventListener('click', () => {
+    const isPassword = llmApiKeyInput.type === 'password';
+    llmApiKeyInput.type = isPassword ? 'text' : 'password';
+    toggleApiKeyBtn.textContent = isPassword ? '隠す' : '表示';
+  });
+
+  saveApiKeyCheckbox.addEventListener('change', persistLlmSettings);
 
   // 手番（先手/後手）切り替え
   colorGroup.addEventListener('click', (e) => {
@@ -746,6 +1079,7 @@
   window.addEventListener('resize', resizeCanvas);
 
   // 初期化
+  loadLlmSettings();
   resizeCanvas();
   startNewGame();
 })();
