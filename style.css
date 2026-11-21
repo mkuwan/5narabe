@@ -25,12 +25,17 @@
   padding: 0;
 }
 
+html {
+  overscroll-behavior: none;
+}
+
 body {
   font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", system-ui, -apple-system, sans-serif;
   background: radial-gradient(circle at 20% 0%, #2a241d 0%, var(--bg-primary) 55%, #12100e 100%);
   color: var(--text-primary);
   min-height: 100vh;
   line-height: 1.5;
+  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
 }
 

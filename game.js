@@ -11,6 +11,7 @@
   } = window.GomokuLLM;
 
   const STORAGE_KEY = 'gomoku_llm_settings_v1';
+  const GAME_STATE_STORAGE_KEY = 'gomoku_game_state_v1';
 
   const STAR_POINTS = [
     [3, 3],
@@ -507,6 +508,7 @@
       handleGameEnd(player);
       drawBoard();
       updateUI();
+      persistGameState();
       return true;
     }
 
@@ -516,12 +518,14 @@
       handleGameEnd(EMPTY);
       drawBoard();
       updateUI();
+      persistGameState();
       return true;
     }
 
     currentTurn = player === BLACK ? WHITE : BLACK;
     drawBoard();
     updateUI();
+    persistGameState();
     return true;
   }
 
@@ -606,6 +610,156 @@
         })
       );
     } catch (_) {}
+  }
+
+  function persistGameState() {
+    try {
+      const payload = {
+        version: 1,
+        history: history.map((m) => ({ r: m.r, c: m.c, player: m.player })),
+        userColor,
+        difficulty,
+        scores: {
+          win: scores.win,
+          loss: scores.loss,
+          draw: scores.draw,
+        },
+        soundEnabled,
+        aiComment: aiCommentEl.classList.contains('hidden') ? '' : aiCommentEl.textContent,
+      };
+      localStorage.setItem(GAME_STATE_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function syncDifficultyUI() {
+    difficultyGroup.querySelectorAll('.seg-btn').forEach((el) => {
+      el.classList.toggle('active', el.dataset.difficulty === difficulty);
+    });
+    difficultyDescEl.textContent = DIFFICULTY_INFO[difficulty].desc;
+    llmSettingsCard.classList.toggle('hidden', difficulty !== 'llm');
+  }
+
+  function syncColorUI() {
+    colorGroup.querySelectorAll('.seg-btn').forEach((el) => {
+      el.classList.toggle('active', Number(el.dataset.color) === userColor);
+    });
+  }
+
+  function restoreGameState() {
+    let saved = null;
+    try {
+      const raw = localStorage.getItem(GAME_STATE_STORAGE_KEY);
+      if (!raw) return false;
+      saved = JSON.parse(raw);
+    } catch (_) {
+      return false;
+    }
+
+    if (!saved || typeof saved !== 'object') return false;
+
+    // 戦績の復元
+    if (saved.scores && typeof saved.scores === 'object') {
+      const toSafeCount = (v) =>
+        typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0;
+      scores.win = toSafeCount(saved.scores.win);
+      scores.loss = toSafeCount(saved.scores.loss);
+      scores.draw = toSafeCount(saved.scores.draw);
+    }
+
+    // 効果音設定の復元
+    if (typeof saved.soundEnabled === 'boolean') {
+      soundEnabled = saved.soundEnabled;
+      soundIconEl.textContent = soundEnabled ? '🔊' : '🔇';
+    }
+
+    // 難易度の復元
+    if (
+      typeof saved.difficulty === 'string' &&
+      Object.prototype.hasOwnProperty.call(DIFFICULTY_INFO, saved.difficulty)
+    ) {
+      difficulty = saved.difficulty;
+      syncDifficultyUI();
+    }
+
+    // 手番の復元
+    if (saved.userColor === BLACK || saved.userColor === WHITE) {
+      userColor = saved.userColor;
+      aiColor = userColor === BLACK ? WHITE : BLACK;
+      syncColorUI();
+    }
+
+    // 盤面と棋譜の復元（1手ずつ整合性を検証して再構築）
+    const rebuiltBoard = createEmptyBoard();
+    const rebuiltHistory = [];
+    let rebuiltWinLine = null;
+    let rebuiltGameOver = false;
+    let historyValid = Array.isArray(saved.history);
+
+    if (historyValid) {
+      for (let i = 0; i < saved.history.length; i++) {
+        const move = saved.history[i];
+        const expectedPlayer = i % 2 === 0 ? BLACK : WHITE;
+        if (
+          rebuiltGameOver ||
+          !move ||
+          !Number.isInteger(move.r) ||
+          !Number.isInteger(move.c) ||
+          move.r < 0 ||
+          move.r >= BOARD_SIZE ||
+          move.c < 0 ||
+          move.c >= BOARD_SIZE ||
+          move.player !== expectedPlayer ||
+          rebuiltBoard[move.r][move.c] !== EMPTY
+        ) {
+          historyValid = false;
+          break;
+        }
+
+        rebuiltBoard[move.r][move.c] = move.player;
+        rebuiltHistory.push({ r: move.r, c: move.c, player: move.player });
+
+        const win = checkWin(rebuiltBoard, move.r, move.c, move.player);
+        if (win) {
+          rebuiltWinLine = win;
+          rebuiltGameOver = true;
+        } else if (rebuiltHistory.length >= BOARD_SIZE * BOARD_SIZE) {
+          rebuiltGameOver = true;
+        }
+      }
+    }
+
+    if (!historyValid) {
+      return false;
+    }
+
+    if (aiTimerId !== null) {
+      clearTimeout(aiTimerId);
+      aiTimerId = null;
+    }
+    gameSessionId++;
+
+    board = rebuiltBoard;
+    history = rebuiltHistory;
+    winningLine = rebuiltWinLine;
+    gameOver = rebuiltGameOver;
+    isAiThinking = false;
+    hoverPos = null;
+    currentTurn = history.length % 2 === 0 ? BLACK : WHITE;
+    resultOverlay.classList.add('hidden');
+    showAiError('');
+    showAiComment(
+      history.length > 0 && typeof saved.aiComment === 'string' ? saved.aiComment : ''
+    );
+
+    drawBoard();
+    updateUI();
+
+    // AIの手番（思考中のリロードや後手初手など）なら自動で思考を再開
+    if (!gameOver && currentTurn === aiColor) {
+      triggerAiTurn();
+    }
+
+    return true;
   }
 
   function loadLlmSettings() {
@@ -727,6 +881,7 @@
 
     drawBoard();
     updateUI();
+    persistGameState();
 
     // ユーザーが後手（白）なら、PC（黒）が初手を打つ
     if (currentTurn === aiColor) {
@@ -763,6 +918,7 @@
     currentTurn = userColor;
     drawBoard();
     updateUI();
+    persistGameState();
   }
 
   /**
@@ -865,11 +1021,7 @@
     if (!nextDiff || nextDiff === difficulty) return;
 
     difficulty = nextDiff;
-    difficultyGroup.querySelectorAll('.seg-btn').forEach((el) => {
-      el.classList.toggle('active', el.dataset.difficulty === difficulty);
-    });
-    difficultyDescEl.textContent = DIFFICULTY_INFO[difficulty].desc;
-    llmSettingsCard.classList.toggle('hidden', difficulty !== 'llm');
+    syncDifficultyUI();
     startNewGame();
   });
 
@@ -1057,9 +1209,7 @@
 
     userColor = nextColor;
     aiColor = userColor === BLACK ? WHITE : BLACK;
-    colorGroup.querySelectorAll('.seg-btn').forEach((el) => {
-      el.classList.toggle('active', Number(el.dataset.color) === userColor);
-    });
+    syncColorUI();
     startNewGame();
   });
 
@@ -1074,6 +1224,7 @@
   soundToggleBtn.addEventListener('click', () => {
     soundEnabled = !soundEnabled;
     soundIconEl.textContent = soundEnabled ? '🔊' : '🔇';
+    persistGameState();
   });
 
   window.addEventListener('resize', resizeCanvas);
@@ -1081,5 +1232,7 @@
   // 初期化
   loadLlmSettings();
   resizeCanvas();
-  startNewGame();
+  if (!restoreGameState()) {
+    startNewGame();
+  }
 })();
